@@ -1,0 +1,223 @@
+---
+title: "CPTAC_v3" 
+author: "Sung Hyun Lee"
+date: "2022-08-04"
+output: html_document
+---
+This is the final version of CPTAC analysis for LUAD in Fig. 9 of sensitivity analysis ms.
+```{r}
+
+rm(list = ls())
+library(rstatix)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+```
+```{r}
+# MAPK3
+# Use Reticulate pkg to import CPTAC data from Python API
+#if (!require(reticulate)) install.packages("reticulate") 
+# Load the package
+library(reticulate)
+
+# Specify to use the environment where the cptac package is installed. Replace 
+# "dev" with the name of your environment. If you use an environment manager 
+# besides conda, you'll want this command: use_virtualenv("myenv")
+use_condaenv("base", required = TRUE)
+cptac <- import("cptac", convert = FALSE)
+#Select LUAD
+cc <- cptac$Luad() 
+```
+```{r}
+#Join BRAF proteomics & KRAS mutation data
+proteomics_and_mut_py <- cc$join_omics_to_mutations(
+  omics_df_name = "proteomics",
+  mutations_genes = "KRAS",
+  omics_genes = "BRAF",
+  quiet = TRUE
+)
+# Put into R dataframe
+proteomics_and_mut                  <- py_to_r(proteomics_and_mut_py)
+# Shorten column names
+names(proteomics_and_mut)[names(proteomics_and_mut) == 'BRAF_proteomics       NP_001341538.1|NP_004324.2']        <- 'BRAF_proteomics'
+proteomics_and_mut$BRAF_proteomics  <- scale(proteomics_and_mut$BRAF_proteomics) #z-scored BRAF abund
+
+med_BRAF                            <- median(proteomics_and_mut$BRAF_proteomics)
+min_BRAF                            <- min(proteomics_and_mut$BRAF_proteomics)
+max_BRAF                            <- max(proteomics_and_mut$BRAF_proteomics)
+proteomics_and_mut$group            <- cut(proteomics_and_mut$BRAF_proteomics, breaks = c(min_BRAF, med_BRAF, max_BRAF), labels =c('Low','High'))
+
+#Join pMAPK3 phosphoproteomics & KRAS mutation data
+MAPK3_phosproteomics_and_mut_py     <- cc$join_omics_to_mutations(
+  omics_df_name = "phosphoproteomics",
+  mutations_genes = "KRAS",
+  omics_genes = "MAPK3",
+  quiet = TRUE
+)
+#Shorten column names
+MAPK3_phosproteomics_and_mut        <- py_to_r(MAPK3_phosproteomics_and_mut_py)
+names(MAPK3_phosproteomics_and_mut)[names(MAPK3_phosproteomics_and_mut) == 'MAPK3_phosphoproteomics  T202Y204  IADPEHDHTGFLtEyVATR  NP_002737.2|NP_001035145.1|NP_001103361.1'] <- 'T202Y204'
+names(MAPK3_phosproteomics_and_mut)[names(MAPK3_phosproteomics_and_mut) == '                         Y204      IADPEHDHTGFLTEyVATR  NP_002737.2|NP_001035145.1|NP_001103361.1'] <- 'Y204'
+
+#Take out missing values (NA)
+MAPK3_phosproteomics_and_mut        <- na.omit(MAPK3_phosproteomics_and_mut)
+MAPK3_phosproteomics_and_mut        <- MAPK3_phosproteomics_and_mut[rowSums(is.na(MAPK3_phosproteomics_and_mut)) == 0, ]  
+
+#Get median and range of values to split into low and high BRAF groups
+med_T202Y204                        <- median(MAPK3_phosproteomics_and_mut$T202Y204)
+min_T202Y204                        <- min(MAPK3_phosproteomics_and_mut$T202Y204)
+max_T202Y204                        <- max(MAPK3_phosproteomics_and_mut$T202Y204)
+MAPK3_phosproteomics_and_mut$group  <- cut(MAPK3_phosproteomics_and_mut$T202Y204, breaks = c(min_T202Y204, med_T202Y204, max_T202Y204), labels =c('Low','High'))
+
+BRAF_MAPK3_merge                    <- merge(proteomics_and_mut, MAPK3_phosproteomics_and_mut,
+                          by = 'row.names', all = TRUE)
+BRAF_MAPK3_merge                    <- BRAF_MAPK3_merge[rowSums(is.na(BRAF_MAPK3_merge)) == 0, ]  
+
+names(BRAF_MAPK3_merge)[names(BRAF_MAPK3_merge) == 'KRAS_Location                                                                                    '] <- 'KRAS_Location'
+names(BRAF_MAPK3_merge)[names(BRAF_MAPK3_merge) == 'KRAS_Mutation                                                                                    '] <- 'KRAS_Mutation'
+
+BRAF_MAPK3_merge$mut_status         <- ifelse(BRAF_MAPK3_merge$KRAS_Location == 'No_mutation', 'WT','Mutant')
+
+
+normal_df <- subset(BRAF_MAPK3_merge, KRAS_Location                                                      =='No_mutation')
+mutant_df <- subset(BRAF_MAPK3_merge, KRAS_Location                                                      !='No_mutation')
+
+BRAF_MAPK3_merge[['mut_status']] = ordered(BRAF_MAPK3_merge[['mut_status']], levels = c('WT', 'Mutant'))
+
+stat.test                            <- BRAF_MAPK3_merge %>% group_by(group.y) %>% t_test(T202Y204 ~ mut_status) %>% adjust_pvalue(method = "bonferroni") %>% add_significance("p.adj")
+
+stat.test                            <- stat.test %>% add_xy_position(x = "group.y", dodge = 0.8) 
+# Create plot
+all_comp                             <- ggboxplot(BRAF_MAPK3_merge, x = "group.y", y = "T202Y204", fill = "mut_status", outlier.shape = NA)
+# Add p-values to the plot
+all_comp_clx                         <- all_comp + stat_pvalue_manual(stat.test,  label = "p.adj.signif", tip.length = 0) + scale_fill_discrete(name = "mut_status")
+# Pairewise comparison
+stat.test2                           <- BRAF_MAPK3_merge %>% group_by(mut_status) %>% t_test(T202Y204 ~ group.y) %>% adjust_pvalue(method = "bonferroni") %>% add_significance("p.adj")
+stat.test2                            <- stat.test2 %>% add_xy_position(x="group.y", group = "mut_status")
+all_comp_clx2                         <- all_comp_clx + stat_pvalue_manual(stat.test2,  label = "p.adj.signif", tip.length = 0.02, step.increase = 0.05)  + scale_fill_discrete(name = "KRAS mutation status") + theme(legend.position="right") #+ scale_y_continuous(expand = expansion(mult = c(0.05, 0.1)))
+
+# Save plot
+pdf(file = "G:/My Drive/Lab/Sensitivity paper/Figures/PDFs/mutant_BRAF_pMAPK3_LUAD_v2.pdf", width = 6, height = 4) 
+ggpar(all_comp_clx2, title = "LUAD", 
+            xlab ="BRAF abundance", 
+            ylab = "Phosphorylated MAPK3 (T202Y204", ylim=c(-6,6)) + theme(plot.title = element_text(hjust = 0.5))
+ggpar
+dev.off()
+
+
+library(dplyr)
+mean_summary <- BRAF_MAPK3_merge %>%
+   group_by(group.y, mut_status) %>% 
+   summarise_at(vars("T202Y204"), mean)
+# Calculate difference in means
+Mut_mean <- subset(mean_summary, mean_summary$mut_status == 'Mutant')
+WT_mean <- subset(mean_summary, mean_summary$mut_status == 'WT')
+diff(Mut_mean$T202Y204)
+diff(WT_mean$T202Y204)
+
+```
+
+
+```{r}
+#Join BRAF proteomics & KRAS mutation data
+proteomics_and_mut_py <- cc$join_omics_to_mutations(
+  omics_df_name = "proteomics",
+  mutations_genes = "KRAS",
+  omics_genes = "BRAF",
+  quiet = TRUE
+)
+proteomics_and_mut <- py_to_r(proteomics_and_mut_py)
+names(proteomics_and_mut)[names(proteomics_and_mut) == 'BRAF_proteomics       NP_001341538.1|NP_004324.2'] <- 'BRAF_proteomics'
+proteomics_and_mut$BRAF_proteomics<- scale(proteomics_and_mut$BRAF_proteomics) #z-scored BRAF abund
+
+med_BRAF <- median(proteomics_and_mut$BRAF_proteomics)
+min_BRAF <- min(proteomics_and_mut$BRAF_proteomics)
+max_BRAF <- max(proteomics_and_mut$BRAF_proteomics)
+proteomics_and_mut$group <- cut(proteomics_and_mut$BRAF_proteomics, breaks = c(min_BRAF, med_BRAF, max_BRAF), labels =c('Low','High'))
+
+#Join pMAPK1 phosphoproteomics & KRAS mutation data
+MAPK1_phosproteomics_and_mut_py <- cc$join_omics_to_mutations(
+  omics_df_name = "phosphoproteomics",
+  mutations_genes = "KRAS",
+  omics_genes = "MAPK1",
+  quiet = TRUE
+)
+MAPK1_phosproteomics_and_mut <- py_to_r(MAPK1_phosproteomics_and_mut_py)
+names(MAPK1_phosproteomics_and_mut)[names(MAPK1_phosproteomics_and_mut) == 'MAPK1_phosphoproteomics  S360      FQPGYRs              NP_002736.3'] <- 'S360'
+names(MAPK1_phosproteomics_and_mut)[names(MAPK1_phosproteomics_and_mut) == '                         T185Y187  VADPDHDHTGFLtEyVATR  NP_002736.3'] <- 'T185Y187'
+names(MAPK1_phosproteomics_and_mut)[names(MAPK1_phosproteomics_and_mut) == '                         Y187      VADPDHDHTGFLTEyVATR  NP_002736.3'] <- 'Y187'
+
+
+#Take out NA
+MAPK1_phosproteomics_and_mut <- na.omit(MAPK1_phosproteomics_and_mut)
+MAPK1_phosproteomics_and_mut <- MAPK1_phosproteomics_and_mut[rowSums(is.na(MAPK1_phosproteomics_and_mut)) == 0, ]  
+
+#Get median and range of values to split into low and high BRAF groups
+med_T185Y187 <- median(MAPK1_phosproteomics_and_mut$T185Y187)
+min_T185Y187 <- min(MAPK1_phosproteomics_and_mut$T185Y187)
+max_T185Y187 <- max(MAPK1_phosproteomics_and_mut$T185Y187)
+MAPK1_phosproteomics_and_mut$group <- cut(MAPK1_phosproteomics_and_mut$T185Y187, breaks = c(min_T185Y187, med_T185Y187, max_T185Y187), labels =c('Low','High'))
+
+BRAF_MAPK1_merge <- merge(proteomics_and_mut, MAPK1_phosproteomics_and_mut,
+                          by = 'row.names', all = TRUE)
+BRAF_MAPK1_merge <- BRAF_MAPK1_merge[rowSums(is.na(BRAF_MAPK1_merge)) == 0, ]  
+
+names(BRAF_MAPK1_merge)[names(BRAF_MAPK1_merge) == 'KRAS_Location                                   '] <- 'KRAS_Location'
+names(BRAF_MAPK1_merge)[names(BRAF_MAPK1_merge) == 'KRAS_Mutation                                                      '] <- 'KRAS_Mutation'
+
+BRAF_MAPK1_merge$mut_status <- ifelse(BRAF_MAPK1_merge$KRAS_Location == 'No_mutation', 'WT','Mutant')
+
+normal_df <- subset(BRAF_MAPK1_merge, KRAS_Location                                                      =='No_mutation')
+mutant_df <- subset(BRAF_MAPK1_merge, KRAS_Location                                                      !='No_mutation')
+
+stat.test <- BRAF_MAPK1_merge %>%
+  group_by(group.y) %>%
+  t_test(T185Y187 ~ mut_status) %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  add_significance("p.adj")
+
+stat.test <- stat.test %>%
+  add_xy_position(x = "group.y", dodge = 0.8)
+
+BRAF_MAPK1_merge[['mut_status']] = ordered(BRAF_MAPK1_merge[['mut_status']], levels = c('WT', 'Mutant'))
+
+mut_stat_levels = c("WT","Mutant")
+all_comp <- ggboxplot(BRAF_MAPK1_merge, x = "group.y", y = "T185Y187", fill = "mut_status", levels = mut_stat_levels, outlier.shape = NA)
+all_comp_clx <- all_comp + stat_pvalue_manual(
+  stat.test,  label = "p.adj.signif", tip.length = 0
+  ) + scale_fill_discrete(name = "mut_status")
+
+
+stat.test2 <- BRAF_MAPK1_merge %>%
+  group_by(mut_status) %>%
+  t_test(T185Y187 ~ group.y) %>% 
+  adjust_pvalue(method = "bonferroni") %>% 
+  add_significance("p.adj")
+stat.test2 <- stat.test2 %>% add_xy_position(x="group.y", group = "mut_status")
+
+
+all_comp_clx2 <- all_comp_clx + stat_pvalue_manual(
+    stat.test2,  label = "p.adj.signif", tip.length = 0.02,
+    step.increase = 0.05
+  ) + scale_fill_discrete(name = "KRAS mutation status") + theme(legend.position="right") 
+
+pdf(file = "G:/My Drive/Lab/Sensitivity paper/Figures/PDFs/mutant_BRAF_pMAPK1_LUAD_v2.pdf", width = 6, height = 4) 
+ggpar(all_comp_clx2, title = "LUAD", 
+            xlab ="BRAF abundance", 
+            ylab = "Phosphorylated MAPK1 (T185Y187)", ylim= c(-6,6)) + theme(plot.title = element_text(hjust = 0.5))
+ggpar
+dev.off()
+
+
+library(dplyr)
+mean_summary <- BRAF_MAPK1_merge %>%
+   group_by(group.y, mut_status) %>% 
+   summarise_at(vars("T185Y187"), mean)
+
+Mut_mean <- subset(mean_summary, mean_summary$mut_status == 'Mutant')
+WT_mean <- subset(mean_summary, mean_summary$mut_status == 'WT')
+
+diff(Mut_mean$T185Y187)
+diff(WT_mean$T185Y187)
+```
