@@ -3,7 +3,7 @@
 This repository contains the code needed to reproduce the following figures from the paper.
 * **Figure 2** 
 * **Figure 3** 
-* **Figure 4A-D** : 
+* **Figure 4A-D** 
 * **Figure 5A-F**
 * **Figure 6A-B**
 * **Figure 7A-D**
