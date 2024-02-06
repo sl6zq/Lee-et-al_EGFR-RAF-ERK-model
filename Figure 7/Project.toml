@@ -1,0 +1,7 @@
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+MLJ = "add582a8-e3ab-11e8-2d5e-e98b27df1bc7"
+ModelMiner = "93a108e7-a327-4478-9a72-b0f8ee6311f8"
+PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
+RDatasets = "ce6b1742-4840-55fa-b093-852dadbb1d8b"
