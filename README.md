@@ -1,6 +1,6 @@
 # EGFR-ERK-sensitivity
 
-This repository contains the code needed to reproduce the following figures from the paper.
+This repository contains the code needed to reproduce the following figures from the manuscript authored by Lee et al. entitled "Systems-level consequences of low RAF abundance for EGFR-ERK signaling"
 * **Figure 1** 
 * **Figure 2B,C** 
 * **Figure 3** 
