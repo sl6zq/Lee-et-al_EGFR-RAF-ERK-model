@@ -187,7 +187,7 @@ end
 %% 6 mdoes 
 wanted_sloppy = load('V','V'); %Select the sign of sloppiness analysis eigenvalues (V preferred)
 eigvaldata = load('egfr-logsingval.mat');
-data_sloppy = struct2array(wanted_sloppy);
+data_sloppy2 = struct2array(wanted_sloppy);
 
 % SA labels
 mylabels;
@@ -198,7 +198,7 @@ labels2 = table2array(labels)
 labels3 = string(labels2); %for reference
 
 % Make sloppycell order follow my order
-[data_sloppy_sameorder] = order_data(data_sloppy, labels2, PLSR_cat_porder);
+[data_sloppy_sameorder] = order_data(data_sloppy2, labels2, PLSR_cat_porder);
 
 param_sens_all = data_sloppy_sameorder(:,1) .^2 * eigvaldata.logs(1) + data_sloppy_sameorder(:,2) .^2 * eigvaldata.logs(2) + ...
     + data_sloppy_sameorder(:,3) .^2 * eigvaldata.logs(3) + data_sloppy_sameorder(:,4) .^2 * eigvaldata.logs(4) + ...
