@@ -186,6 +186,7 @@ else
 end
 %% 6 mdoes 
 wanted_sloppy = load('V','V'); %Select the sign of sloppiness analysis eigenvalues (V preferred)
+eigvaldata = load('egfr-logsingval.mat');
 data_sloppy = struct2array(wanted_sloppy);
 
 % SA labels
@@ -208,7 +209,6 @@ param_sens_all = data_sloppy_sameorder(:,1) .^2 * eigvaldata.logs(1) + data_slop
 sorted_param_names     = PLSR_cat_porder(params_sens_all_sorted_idx);
 PLSR_cat_sorted_sloppy = categorical(sorted_param_names);
 h5 = figure;
-h5.Position = figsize;
 bar(PLSR_cat_sorted_sloppy, params_sens_all_sorted,'k');
 ylabel('Modes 0 ~ 5');
 
@@ -224,7 +224,6 @@ PLSR_cat2 = reordercats(PLSR_cat2,{'kEf'; 'kcatE'; 'kpMEK'; 'knfpSOS'; 'kBr'; 'k
 [PLSR_vip_sameorder] = order_data(diffraf1_vipScores, PLSR_cat2, PLSR_cat_porder);
 
 h4 = figure;
-h4.Position = figsize;
 combined_dat = [param_sens_all PLSR_vip_sameorder];
 bar(PLSR_cat_porder, combined_dat);
 ylabel('Sensitivity');
