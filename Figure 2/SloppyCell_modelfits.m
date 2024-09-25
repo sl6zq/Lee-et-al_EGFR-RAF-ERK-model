@@ -102,7 +102,7 @@ ylim([0 max(min_sor_perkdatanums) * 1.2]);ax = gca;
 xlim([0 62]);
 
 %% Compare membrane RAF1 vs. membrane SOS trajectories
-[T1, ~, ~, params_minsor, ~, allValues_rand]   = fullEGFR9_onemodel(0:1:60, yinit, params','min_sor','');
+[T1, ~, ~, params_minsor, ~, allValues_rand]   = fullEGFR9_onemodel(0:1:60, yinit, params','min_sor');
 % membrane SOS
 %figure
 %plot(T1, allValues_rand(:,157)) %Raf1_pm_param
@@ -171,8 +171,8 @@ rmsd_all = (traj_sormin.RasGTP_mu - min_sor_rasdatanums);
 %% B: Max. & time-averaged model outputs (Fig. 3B) for -sor, + sor species
 paramlist;
 
-[T1, ~, ~, params_minsor, ~, allValues_minsor]   = fullEGFR9_onemodel(traj_sormin.t, yinit, params,'min_sor', ''); 
-[~, ~, ~, params_plussor, ~, allValues_plussor]  = fullEGFR9_onemodel(traj_sormin.t, yinit, params,'plus_sor', ''); 
+[T1, ~, ~, params_minsor, ~, allValues_minsor]   = fullEGFR9_onemodel(traj_sormin.t, yinit, params,'min_sor'); 
+[~, ~, ~, params_plussor, ~, allValues_plussor]  = fullEGFR9_onemodel(traj_sormin.t, yinit, params,'plus_sor'); 
 
 traj_sormin_pEGFR  = allValues_minsor(:,41)  + allValues_minsor(:,25)  + allValues_minsor(:,44); %'E', 'EG2', 'EG2SOS'
 traj_plussor_pEGFR = allValues_plussor(:,41) + allValues_plussor(:,25) + allValues_plussor(:,44); %'E' ,' EG2', 'EG2SOS'
