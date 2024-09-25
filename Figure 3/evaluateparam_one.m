@@ -238,8 +238,8 @@ for k = 1:number
     
     
     if strcmp(type, 'LHS') ~=1
-        [T1, ~, ~, params_minsor, ~, allValues_rand]   = fullEGFR9_onemodel(timeSpan, yinit, changed_params,'min_sor', 'vary_init'); %given yinit used, 'vary_init' only specifies the indices of init conditions
-        [T2, ~, ~, params_plussor, ~, allValues_rand2] = fullEGFR9_onemodel(timeSpan, yinit, changed_params,'plus_sor', 'vary_init'); %given yinit used, 'vary_init' only specifies the indices of init conditions
+        [T1, ~, ~, params_minsor, ~, allValues_rand]   = fullEGFR9_onemodel(timeSpan, yinit, changed_params,'min_sor'); %given yinit used, 'vary_init' only specifies the indices of init conditions
+        [T2, ~, ~, params_plussor, ~, allValues_rand2] = fullEGFR9_onemodel(timeSpan, yinit, changed_params,'plus_sor'); %given yinit used, 'vary_init' only specifies the indices of init conditions
     end
     
     if strcmp(type, 'LHS') == 1
