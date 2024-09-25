@@ -136,7 +136,7 @@ PLSR_cat2  = reordercats(PLSR_cat2,{'kEf'; 'kcatE'; 'kpMEK'; 'knfpSOS'; 'kBr'; '
 'Kmgneslow'; 'kdpMEK'; 'knfpiR1r'; 'kdR1r'; 'kiBr'; 'kdR1f'; 'kiBf'; 'kfpBr'; 'kdpSOS';
 'kdp'; 'kdEr'; 'kdEf'; 'kdpR1'; 'kG2r'; 'kG2f'; 'knfpiBr'; 'kfpR1r'; 'kEr'});
 [Xloadings_porder] = order_data(Xloadings, PLSR_cat2, PLSR_cat_porder);
-[norm_loadings, data_matlab, data_sloppy] = sloppy_comparison(num_Param, sampling, ncomp, select_ncomp, wanted_param_porder, Xloadings_porder, Q2Y, PLSR_cat_porder, final_cscheme);
+[norm_loadings, data_matlab, data_sloppy] = sloppy_comparison(num_Param, sampling, ncomp, select_ncomp, wanted_param_porder, Xloadings, Q2Y, PLSR_cat_porder, final_cscheme);
 plot_correlation(num_Param, sampling, abs(data_matlab), abs(data_sloppy), names_porder) %names are in same order for PLSR SA & Sloppy
 
 %% check bivariate normality 
