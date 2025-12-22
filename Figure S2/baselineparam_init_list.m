@@ -275,3 +275,4 @@ PLSR_cat = categorical(names);
 PLSR_cat = reordercats(PLSR_cat,{'k_{E,f}'; 'k_{catE}'; 'k_{pMEK}'; 'k_{nfpSOS}'; 'k_{B,r}'; 'k_{B,f}'; 'k_{dpERK}'; 'k_{R1,r}'; 'k_{R1,f}'; 'k_{nfpBR1}'; 'k_{pR1}'; 'k_{SOS,r}'; 'k_{SOS,f}'; 'k_{Rgneslow}'; 'k_{Son}'; 'k_{G2SOS,r}'; 'k_{G2SOS,f}'; 'k_{iR1,r}'; 'k_{iR1,f}'; 'k_{Soff}'; 'k_{pERK}'; 'k_{Rhydro}';
 'K_{mgneslow}'; 'k_{dpMEK}'; 'k_{nfpiR1r}'; 'k_{dR1,r}'; 'k_{iB,r}'; 'k_{dR1,f}'; 'k_{iB,f}'; 'k_{fpB,r}'; 'k_{dpSOS}';
 'k_{dp}'; 'k_{dE,r}'; 'k_{dE,f}'; 'k_{dpR1}'; 'k_{G2,r}'; 'k_{G2,f}'; 'k_{nfpiB,r}'; 'k_{fpR1,r}'; 'k_{E,r}'});
+
