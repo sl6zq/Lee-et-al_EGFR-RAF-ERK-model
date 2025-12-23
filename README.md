@@ -7,7 +7,7 @@ This repository contains the code needed to reproduce the following figures from
 * **Figure 4**
 * **Figure 5**
 * **Figure 6**
-* **Supplementary Figures S1, S2, S3, and S4**
+* **Figures S1-S6**
 
 ## Requirements and running code
 MATLAB version R2020a
