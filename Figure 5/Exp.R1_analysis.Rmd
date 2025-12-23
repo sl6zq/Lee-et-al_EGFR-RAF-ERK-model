@@ -1,0 +1,404 @@
+---
+title: "Exp.R1_revised_v2"
+author: "Sung Hyun (Sarah) Lee"
+date: "2025-04-02"
+output: html_document
+---
+
+YFP intensity is not corrected for illumination in this version
+cell segmentation based on YFP vs. pERK via RelateObjects
+
+```{r}
+rm(list = ls())
+# Load required libraries
+library(ggplot2)
+library(caret)
+library(stringr)
+library(hrbrthemes)
+library(viridis)
+library(reshape2)
+library(ggstatsplot)
+library(rstatix)
+library(Rmisc)
+library(ggpubr)
+library(dplyr)
+library(EnvStats)
+library(tidyverse)
+library(pls)
+library(dotwhisker)
+library(philentropy)
+library(nlme)
+library(plyr)                                
+library(dplyr)   
+```
+
+```{r}
+# Load data 
+segmentation <- "pERK"
+if (segmentation == "pERK") {
+  # Get YFP intensity of cells bounded by pERK
+  pERK_data <- read.csv('D:/Aim 1/IF_images/Exp.R1_8_segmentationpERK_boundary.csv',header=TRUE)
+  YFP_data  <- read.csv('D:/Aim 1/IF_images/Exp.R1_8_segmentationYFPobject_boundbypERK.csv',header=TRUE)
+} else if (segmentation == "YFP") {
+  pERK_data <- read.csv('D:/Aim 1/IF_images/Exp.R1_8_segmentationpERKobject_boundbyYFP.csv',header=TRUE)
+  YFP_data  <- read.csv('D:/Aim 1/IF_images/Exp.R1_8_segmentationYFP_boundary.csv',header=TRUE)
+}
+
+```
+```{r}
+YFP_data$Metadata_Time          <- factor(YFP_data$Metadata_Time, levels = c('0min','5min'))
+YFP_data$Metadata_Transfection  <- factor(YFP_data$Metadata_Transfection, levels = c('parental','EV','RAF1'))
+
+pERK_data$Metadata_Time         <- factor(pERK_data$Metadata_Time, levels = c('0min','5min'))
+pERK_data$Metadata_Transfection <- factor(pERK_data$Metadata_Transfection, c('parental','EV','RAF1'))
+
+# Check distributions
+pERK_dens          <- ggplot(pERK_data, aes(x=Intensity_MeanIntensity_pERK_in, color=Metadata_Transfection)) + geom_density(alpha = 0.2) + facet_grid(vars(Metadata_Time)) +  labs(y = "Number of cells", title = paste0("pERK, Segmentation by ", segmentation)) + theme_classic() 
+pERK_dens
+
+YFP_dens          <- ggplot(YFP_data, aes(x=Intensity_MeanIntensity_YFP_in, color=Metadata_Transfection)) + geom_density(alpha = 0.2) + facet_grid(vars(Metadata_Time)) +  labs(y = "Number of cells", title = paste0("YFP, Segmentation by ", segmentation)) + theme_classic()
+YFP_dens
+```
+
+```{r}
+# Sanity check - do numbers correspond to images?
+# Integrated YFP intensity (should be lowest for RAF1 and highest for EV transfection)
+df_YFP <- YFP_data %>%
+  group_by(Metadata_Time, Metadata_Transfection) %>%
+  summarise(mean_intensity = mean(Intensity_MeanIntensity_YFP_in), sd_int = sd(Intensity_MeanIntensity_YFP_in), n = n(), se = sd_int / sqrt(n))
+
+
+df_int_YFP <- YFP_data %>%
+  group_by(Metadata_Time, Metadata_Transfection) %>%
+  summarise(mean_intensity = mean(Intensity_IntegratedIntensity_YFP_in), sd_int = sd(Intensity_IntegratedIntensity_YFP_in), n = n(), se = sd_int / sqrt(n))
+
+# Edge YFP intensity
+df_edgeYFP <- YFP_data %>%
+  group_by(Metadata_Time, Metadata_Transfection) %>%
+  summarise(mean_intensity = mean(Intensity_MeanIntensityEdge_YFP_in), sd_int = sd(Intensity_MeanIntensityEdge_YFP_in), n = n(), se = sd_int / sqrt(n))
+# pERK intensity
+df_pERK <- pERK_data %>%
+  subset(Metadata_Transfection != "EV") %>%
+  group_by(Metadata_Time, Metadata_Transfection) %>%
+  summarise(mean_intensity = mean(Intensity_IntegratedIntensity_pERK_in), sd_int = sd(Intensity_IntegratedIntensity_pERK_in), n = n(), se = sd_int / sqrt(n))
+# YFP integrated intensity distribution
+p_YFP <- ggplot(df_YFP, aes(x=Metadata_Time, y=mean_intensity, fill = Metadata_Transfection)) + 
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean_intensity-se, ymax=mean_intensity+se), width=.2,
+                 position=position_dodge(.9)) 
+
+p_int_YFP <- ggplot(df_int_YFP, aes(x=Metadata_Time, y=mean_intensity, fill = Metadata_Transfection)) + 
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean_intensity-se, ymax=mean_intensity+se), width=.2,
+                 position=position_dodge(.9)) 
+# YFP edge intensity distribution
+p_YFPedge <- ggplot(df_edgeYFP, aes(x=Metadata_Time, y=mean_intensity, fill = Metadata_Transfection)) + 
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean_intensity-se, ymax=mean_intensity+se), width=.2,
+                 position=position_dodge(.9)) 
+
+p_pERK <- ggplot(df_pERK, aes(x=Metadata_Time, y=mean_intensity, fill = Metadata_Transfection)) + 
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean_intensity-se, ymax=mean_intensity+se), width=.2,
+                 position=position_dodge(.9)) 
+
+# Finished bar plot
+P_YFP_final <- p_YFP + labs(x="Time with EGF (min)", y = "Mean YFP intensity/cell", title = "Mean YFP intensity/cell") + theme_classic()
+P_YFP_final
+
+P_YFP_int_final <- p_int_YFP + labs(x="Time with EGF (min)", y = "Integrated YFP intensity/cell", title = "Integrated YFP intensity/cell") + theme_classic()
+P_YFP_int_final
+
+P_YFPedge_final <- p_YFPedge + labs(x="Time with EGF (min)", y = "Mean edge YFP intensity/# cell", title = "Mean Edge YFP intensity") + theme_classic()
+P_YFPedge_final
+
+# Finished bar plot
+P_pERK_final <- p_pERK + labs(x="Time with EGF (min)", y = "Integrated pERK intensity/# cell", title="Integrated pERK intensity") + theme_classic()
+P_pERK_final
+
+```
+
+
+```{r}
+# low vs. high RAF1 expressors' pERK activities
+# combine per cell YFP and pERK expression data
+if (segmentation == "YFP") {
+  colnames(pERK_data)[which(names(pERK_data) == "Number_Object_Number")] <- "Parent_YFP_boundary"
+  percell_merge <- merge(YFP_data, pERK_data, by= c("Parent_YFP_boundary", "Metadata_Treatment", "Metadata_Replicate", "Metadata_FOV", "Metadata_Transfection", "Metadata_Time"))
+} else if (segmentation == "pERK") {
+  colnames(pERK_data)[which(names(pERK_data) == "Number_Object_Number")] <- "Parent_YFP_boundary"
+  percell_merge <- merge(YFP_data, pERK_data, by= c("Parent_YFP_boundary", "Metadata_Treatment", "Metadata_Replicate", "Metadata_FOV", "Metadata_Transfection", "Metadata_Time"))
+}
+
+# Divide RAF1-transfected vs. parental cells
+RAF1_only_percell_merge          <- subset(percell_merge,Metadata_Transfection == "RAF1")
+parental_only_percell_merge      <- subset(percell_merge,Metadata_Transfection == "parental")
+parental_5min_only_percell_merge <-  subset(parental_only_percell_merge, Metadata_Time == "5min")
+# optional: select cells with top ERK activity?
+top_pERKact_only             <- subset(RAF1_only_percell_merge,Intensity_IntegratedIntensity_pERK_in > 800)
+
+top_pERKact_5min_only        <- subset(top_pERKact_only, Metadata_Time == "5min")
+RAF1_only_percell_merge_5min <- subset(RAF1_only_percell_merge, Metadata_Time == "5min")
+top_pERK_frac                <- nrow(top_pERKact_5min_only)/nrow(RAF1_only_percell_merge_5min) * 100
+
+lm_mod <- ggplot(RAF1_only_percell_merge, aes(x = Intensity_IntegratedIntensity_YFP_in, y = Intensity_IntegratedIntensity_pERK_in)) + facet_wrap(~Metadata_Time, nrow = 4) + geom_point(color = "blue") + geom_smooth(method = "lm", se=FALSE, color="red") + stat_regline_equation(label.x = max(percell_merge$Intensity_IntegratedIntensity_YFP_in)-2900, label.y = max(percell_merge$Intensity_IntegratedIntensity_pERK_in)-200, size =3.6, aes(label =  paste(..adj.rr.label.., sep = "~~~"))) + stat_cor(method = "pearson", label.x = max(percell_merge$Intensity_IntegratedIntensity_YFP_in)-2900, label.y = max(percell_merge$Intensity_IntegratedIntensity_pERK_in)-500, size = 3.6) + labs(x = "Integrated YFP intensity per cell", y = "Integrated pERK intensity per cell") + theme_minimal() + theme(text = element_text(size=15),axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),panel.border = element_rect(color = "black", fill = NA, size = 1)) + scale_color_brewer(palette="Dark2")
+
+
+top_lm <- ggplot(top_pERKact_only, aes(x = Intensity_IntegratedIntensity_YFP_in, y = Intensity_IntegratedIntensity_pERK_in)) + facet_wrap(~Metadata_Time, nrow = 4) + geom_point(color = "blue") + geom_smooth(method = "lm", se=FALSE, color="red") + stat_regline_equation(label.x = 1600, label.y = 2400, size =3.6, aes(label =  paste(..adj.rr.label.., sep = "~~~"))) + stat_cor(method = "pearson", label.x = 1600, label.y = 2000, size = 3.6) + annotate("text", x=1850, y=1550, label= paste("N=", nrow(subset(top_pERKact_only, Metadata_Time = "5min")))) + xlim(c(0,2700)) + ylim(c(0,2500)) + labs(x = "Integrated YFP intensity per cell", y = "Integrated pERK intensity per cell") + theme_classic() + theme(text = element_text(size=15),axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),panel.border = element_rect(color = "black", fill = NA, size = 1)) + scale_color_brewer(palette="Dark2")  
+
+
+```
+
+
+```{r}
+# Interest: YFP+ cells' pERK level
+# YFP+ if YFP > max(parental)
+parental_only   <- subset(percell_merge, Metadata_Transfection == "parental")
+parental_0min   <- subset(parental_only, Metadata_Time == "0min")
+parental_5min   <- subset(parental_only, Metadata_Time == "5min")
+
+threshold <- "parental_0min_med_int_YFP"
+#threshold <- "parental_5min_max_int_YFP"
+#threshold <- "RAF1_5min_med_int_YFP"
+
+# Threshold for YFP+/YFP-: median of 5min EGF-treated parental cells
+if (threshold == "parental_0min_max_int_YFP") {
+  parental_YFPmax <- max(parental_0min$Intensity_MeanIntensity_YFP_in)
+} else if (threshold == "parental_0min_med_int_YFP") {
+  parental_YFPmax <- median(parental_0min$Intensity_MeanIntensity_YFP_in)
+} else if (threshold == "parental_5min_max_int_YFP") {
+  parental_YFPmax <- max(parental_5min$Intensity_MeanIntensity_YFP_in)
+} else if (threshold == "parental_5min_med_int_YFP") {
+  parental_YFPmax <- median(parental_5min$Intensity_MeanIntensity_YFP_in)
+} else if (threshold == "RAF1_5min_med_int_YFP") {
+  parental_YFPmax <- median(RAF1_only_5min_percell_merge$Intensity_MeanIntensity_YFP_in)
+}
+YFP_data_parental <- subset(YFP_data, Metadata_Transfection=="parental")
+parental_YFPmax_in <- max(YFP_data_parental$Intensity_MeanIntensity_YFP_in) 
+
+# EV + RAF1
+percell_EV_RAF1_only <- subset(percell_merge, Metadata_Transfection != "parental")
+# YFP+ if YFP > max(parental)
+#percell_EV_RAF1_5min <- subset(percell_merge, Metadata_Time == "5min")
+
+
+YFP_positive_percell_merge <- percell_EV_RAF1_only %>%
+  group_by(Metadata_Transfection) %>%
+  mutate(YFP_plus = ifelse(Intensity_MeanIntensity_YFP_in > parental_YFPmax, "YFP_plus", "YFP_minus"))
+
+YFP_positive_percell_merge2 <- subset(YFP_positive_percell_merge, YFP_plus == "YFP_plus")
+
+#pERK_hist          <- ggplot(YFP_positive_percell_merge2, aes(x=Intensity_IntegratedIntensity_pERK_in, color=Metadata_Transfection)) + geom_histogram(fill="white", alpha=0.5, position="identity") + facet_grid(vars(Metadata_Time)) + labs(y = "Number of cells", title = "HeLa")+ theme_classic()
+#pERK_hist
+
+all_dens          <- ggplot(YFP_data, aes(x=Intensity_MeanIntensity_YFP_in, color=Metadata_Transfection)) + geom_density(alpha = 0.2) + facet_grid(vars(Metadata_Time)) +  labs(y = "Number of cells", title = "HeLa")+ xlim(c(0,1000)) + theme_classic()
+all_dens
+
+all_hist          <- ggplot(YFP_data, aes(x=Intensity_MeanIntensity_YFP_in, color=Metadata_Transfection)) + geom_histogram(fill="white", alpha=0.5, position="identity") + facet_grid(vars(Metadata_Time)) + labs(y = "Density", title = "HeLa")+ theme_classic()
+all_hist
+
+pERK_dens <- ggplot(YFP_positive_percell_merge2, aes(Intensity_MeanIntensity_pERK_in, fill = Metadata_Transfection)) + geom_density(alpha = 0.2) + labs(x = "Integrated pERK intensity per cell", title = "YFP+") + facet_grid(vars(Metadata_Time)) + labs(y = "Kernel Density Estimate") + theme_classic()
+pERK_dens
+
+YFP_EV <- subset(YFP_positive_percell_merge2,Metadata_Transfection=='EV')
+YFP_EV <- YFP_EV[['Intensity_IntegratedIntensity_pERK_in']]
+
+YFP_RAF1 <- subset(YFP_positive_percell_merge2,Metadata_Transfection=='RAF1')
+YFP_RAF1 <- YFP_RAF1[['Intensity_IntegratedIntensity_pERK_in']]
+# is there significant difference between distributions?
+print(ks.test(YFP_EV, YFP_RAF1))
+
+```
+
+```{r}
+# Interest: YFP+ cells' pERK level
+# YFP+ if YFP > max(RAF1)
+# Threshold for RAF1
+RAF1_only_5min_percell_merge <- subset(RAF1_only_percell_merge, Metadata_Time == '5min')
+#RAF1_YFP_med <- median(RAF1_only_percell_merge$Intensity_IntegratedIntensity_YFP_in)
+RAF1_YFP_med <- median(parental_only_percell_merge$Intensity_IntegratedIntensity_YFP_in)
+#RAF1_YFP_med <- median(RAF1_only_5min_percell_merge$Intensity_IntegratedIntensity_YFP_in)
+# EV + RAF1
+EV_only_percell_merge <- subset(percell_merge, Metadata_Transfection == "EV")
+
+# Define threshold for YFP+ vs. YFP-
+#YFP_positive_percell_merge <- percell_EV_RAF1_only %>%
+#  group_by(Metadata_Transfection) %>%
+#  mutate(YFP_plus = ifelse(Intensity_IntegratedIntensity_YFP_in > RAF1_YFP_med, "YFP_plus", "YFP_minus"))
+
+YFP_positive_percell_merge <- percell_EV_RAF1_only %>%
+  group_by(Metadata_Transfection) %>%
+  mutate(YFP_plus = ifelse(Intensity_MeanIntensity_YFP_in > parental_YFPmax, "YFP_plus", "YFP_minus"))
+
+YFP_positive_percell_merge3 <- YFP_positive_percell_merge
+
+pERK_hist          <- ggplot(YFP_positive_percell_merge3, aes(x=Intensity_IntegratedIntensity_pERK_in, color=Metadata_Transfection)) + geom_histogram(fill="white", alpha=0.5, position="identity") + facet_grid(vars(Metadata_Time)) + labs(y = "Number of cells", title = "HeLa")+ theme_classic()
+pERK_hist
+
+pERK_dens <- ggplot(YFP_positive_percell_merge3, aes(Intensity_IntegratedIntensity_pERK_in, fill = Metadata_Transfection)) + geom_density(alpha = 0.2) + labs(x = "Integrated pERK intensity per cell", title = "YFP+") + facet_grid(vars(Metadata_Time)) + labs(y = "Kernel Density Estimate") + theme_classic()
+pERK_dens
+
+YFP_EV <- subset(YFP_positive_percell_merge3,Metadata_Transfection=='EV')
+YFP_EV <- YFP_EV[['Intensity_IntegratedIntensity_pERK_in']]
+
+YFP_RAF1 <- subset(YFP_positive_percell_merge3,Metadata_Transfection=='RAF1')
+YFP_RAF1 <- YFP_RAF1[['Intensity_IntegratedIntensity_pERK_in']]
+
+print(ks.test(YFP_EV, YFP_RAF1))
+
+
+df_YFP_summary <- YFP_positive_percell_merge3 %>%
+  group_by(Metadata_Time, Metadata_Transfection, YFP_plus) %>%
+  summarise(mean_pERK_intensity = mean(Intensity_IntegratedIntensity_pERK_in), sd_int = sd(Intensity_IntegratedIntensity_pERK_in), n = n(), se = sd_int / sqrt(n))
+
+p_YFP_summary <- ggplot(df_YFP_summary, aes(x=Metadata_Transfection, y=mean_pERK_intensity, fill = YFP_plus)) + 
+  geom_bar(stat="identity", position=position_dodge()) + facet_grid(cols = vars(Metadata_Time)) +
+  geom_errorbar(aes(ymin=mean_pERK_intensity-se, ymax=mean_pERK_intensity+se), width=.2,
+                 position=position_dodge(.9)) + stat_compare_means(aes(group = YFP_plus), method = "t.test", 
+                     label = "p.signif", 
+                     position = position_dodge(0.9), 
+                     hide.ns = TRUE) + theme_classic()
+p_YFP_summary
+
+my_comparisons <- list(c("YFP_plus", "YFP_minus"))
+# remove parental cells from comparison
+YFP_positive_percell_EVRAF1 <- filter(YFP_positive_percell_merge3, Metadata_Transfection != "parental")
+YFP_positive_percell_EVRAF1 <- droplevels(YFP_positive_percell_EVRAF1)
+
+p_YFP_summary2 <- ggbarplot(YFP_positive_percell_EVRAF1, x="Metadata_Transfection", y="Intensity_IntegratedIntensity_pERK_in", color = "YFP_plus", palette = "jco", add = c("mean_se"), position=position_dodge(0.8), facet.by = "Metadata_Time") + theme_classic()
+
+
+stat.test <- YFP_positive_percell_EVRAF1 %>%
+  group_by(Metadata_Transfection, Metadata_Time) %>%
+  t_test(Intensity_IntegratedIntensity_pERK_in ~ YFP_plus, 
+         p.adjust.method = "BH")  # BH is Benjamini-Hochberg adjustment (for multiple comparisons)
+
+stat.test <- stat.test %>% add_significance
+
+stat.test <- stat.test %>%
+  add_xy_position(x = "Metadata_Transfection", dodge = 0.8)
+p_YFP_summary_plot1 <- p_YFP_summary2 + stat_pvalue_manual(
+    stat.test, label = "p.signif", tip.length = 0.01,
+    hide.ns = TRUE) 
+p_YFP_summary_plot1
+
+stat.test2 <- YFP_positive_percell_EVRAF1 %>%
+  group_by(YFP_plus, Metadata_Time) %>%
+  t_test(Intensity_IntegratedIntensity_pERK_in ~ Metadata_Transfection, 
+         p.adjust.method = "BH")  # BH is Benjamini-Hochberg adjustment (for multiple comparisons)
+
+stat.test2 <- stat.test2 %>%
+  add_significance %>%
+  add_xy_position(x= "Metadata_Transfection", dodge = 0.8) %>%
+  add_xy_position(x= "YFP_plus", dodge = 0.8)
+
+p_YFP_summary_plot2 <- p_YFP_summary2 + stat_pvalue_manual(
+    stat.test2, label = "p.signif", tip.length = 0.01,
+    hide.ns = TRUE) 
+p_YFP_summary_plot2
+```
+
+
+
+```{r}
+# linear mixed effects model to see if RAF1 transfection has significant effect on pERK
+library(lme4)
+library(lmerTest)
+library(multcomp)
+# Make time variable a factor
+YFP_positive_percell_EVRAF1$Metadata_Time      <- gsub("min", "", YFP_positive_percell_EVRAF1$Metadata_Time)
+YFP_positive_percell_EVRAF1$Metadata_Time      <- as.factor(YFP_positive_percell_EVRAF1$Metadata_Time)
+YFP_positive_percell_EVRAF1$Metadata_Replicate <- as.factor(YFP_positive_percell_EVRAF1$Metadata_Replicate)
+YFP_positive_percell_EVRAF1$Metadata_FOV       <- as.factor(YFP_positive_percell_EVRAF1$Metadata_FOV)
+YFP_positive_percell_EVRAF1$YFP_plus           <- as.factor(YFP_positive_percell_EVRAF1$YFP_plus)
+
+#subset_dat <- YFP_positive_percell_EVRAF1 %>%
+#  subset(Metadata_Transfection == "RAF1") %>%
+#  subset(Metadata_Time == "5")
+
+subset_dat<-  YFP_positive_percell_EVRAF1
+
+# Define independent variables
+EGFTime        <- subset_dat$Metadata_Time
+Transfection   <- subset_dat$Metadata_Transfection
+Replicate      <- subset_dat$Metadata_Replicate
+FOV            <- subset_dat$Metadata_FOV
+YFP_fact       <- subset_dat$YFP_plus
+
+# Define dependent variable
+DV             <- subset_dat$Intensity_IntegratedIntensity_pERK_in
+# Build a mixed-effects model
+#model          <- lmer(DV ~ YFP_fact + (1|Replicate:FOV), data = subset_dat)
+model          <- lmer(DV ~ YFP_fact + (1|FOV:Replicate), data = subset_dat)
+#model          <- lmer(DV ~ YFP_fact + (1|Replicate) + (1|FOV), data = subset_dat)
+#model          <- lmer(DV ~ EGFTime + YFP_fact + (1|Replicate) + (1|FOV), data = subset_dat)
+
+# ANOVA on the model to test for the fixed effects
+anova(model)
+# Post-hoc test
+posthoc_YFP_fact     <- glht(model, linfct = mcp(YFP_fact = "Tukey"))
+
+summary(posthoc_YFP_fact)
+
+```
+
+
+```{r}
+# mixed effects model
+library(lme4)
+library(lmerTest)
+library(multcomp)
+# Make time variable a factor
+YFP_positive_percell_EVRAF1$Metadata_Time      <- gsub("min", "", YFP_positive_percell_EVRAF1$Metadata_Time)
+YFP_positive_percell_EVRAF1$Metadata_Time      <- as.factor(YFP_positive_percell_EVRAF1$Metadata_Time)
+YFP_positive_percell_EVRAF1$Metadata_Replicate <- as.factor(YFP_positive_percell_EVRAF1$Metadata_Replicate)
+YFP_positive_percell_EVRAF1$Metadata_FOV       <- as.factor(YFP_positive_percell_EVRAF1$Metadata_FOV)
+YFP_positive_percell_EVRAF1$YFP_plus           <- as.factor(YFP_positive_percell_EVRAF1$YFP_plus)
+
+subset_dat                                     <- filter(YFP_positive_percell_EVRAF1, Metadata_Time != "0")
+  
+
+
+# Define independent variables
+EGFTime        <- subset_dat$Metadata_Time
+Transfection   <- subset_dat$Metadata_Transfection
+Replicate      <- subset_dat$Metadata_Replicate
+FOV            <- subset_dat$Metadata_FOV
+YFP_fact       <- subset_dat$YFP_plus
+
+# Define dependent variable
+DV             <- subset_dat$Intensity_IntegratedIntensity_pERK_in
+# Build a mixed-effects model
+# one model for both time points
+#model          <- lmer(DV ~ YFP_fact + EGFTime + (1|Replicate) + (1|FOV), data = subset_dat)
+# two separate models for each time point
+model          <- lmer(DV ~ Metadata_Transfection + (1|Replicate) + (1|FOV), data = subset_dat)
+
+summary(model)
+# ANOVA on the model to test for the fixed effects
+anova(model)
+# Post-hoc test
+#posthoc_YFP_fact     <- glht(model, linfct = mcp(YFP_fact = "Tukey"))
+posthoc_YFP_fact     <- glht(model, linfct = mcp(Metadata_Transfection = "Tukey"))
+
+summary(posthoc_YFP_fact)
+
+
+resid <- resid(model)
+qqnorm(resid)
+qqline(resid)
+hist(resid, main = "Histogram of Residuals", 
+     xlab = "Residuals", border = "black")
+
+
+fitted_values <- fitted(model)
+
+# Plot residuals vs fitted values
+plot(fitted_values, resid, xlab = "Fitted Values", ylab = "Raw Residuals")
+abline(h = 0, col = "red")
+
+
+library(emmeans)
+emm <- emmeans(model, ~ EGFTime)
+plot(emm)
+```
