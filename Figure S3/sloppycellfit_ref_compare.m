@@ -259,4 +259,5 @@ barh(X_cat, vals_all);
 xlim([0 13]);
 %set(gca,'yticklabel',["-sor GTP-bound RAS", "+sor GTP-bound RAS", "-sor membrane RAF1",  "+sor membrane RAF1",  "-sor pMEK", "-sor pERK"])
 xlabel('log(molecules)'); %set(gca, 'YTick', categorical(vals_all));%ylim([0 max(max(vals_all))*1.2]);
+
 legend('Maximum', 'Average');
