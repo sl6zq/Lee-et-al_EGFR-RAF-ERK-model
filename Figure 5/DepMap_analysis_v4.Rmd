@@ -1,0 +1,473 @@
+---
+title: "DepMap_analysis_v4"
+author: "Sung Hyun Lee"
+date: "2024-10-16"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(tidyr)
+library(ggsci)
+library(thematic)
+library(gghighlight)
+library(gdscIC50)
+```
+
+Directly download from https://www.cancerrxgene.org/compounds#t-T
+```{r}
+tram_dat      <- read_csv('PANCANCER_IC_Mon Oct 14 14_21_46 2024.csv')
+mut_dat       <- read_csv('PANCANCER_Genetic_features_variant_Mon Oct 14 14_21_01 2024.csv')
+norm_proteomics_data <- read_excel('1-s2.0-S0092867419313856-mmc2.xlsx', sheet = "Normalized Protein Expression")
+gene_interest <- c("RAF1","BRAF","ARAF")
+#gene_interest <- c("RAF1")
+
+# Filter dataset so that only the genes of interest are included
+norm_prot_filt <- norm_proteomics_data %>% 
+  filter(Gene_Symbol %in% gene_interest)
+```
+```{r}
+# Select columns of interest
+data_int2     <- subset(norm_prot_filt, select = -c(Protein_Id, Description,Group_ID,Uniprot,Uniprot_Acc))
+# Remove columns that contain 'Peptides' in the names
+data_int3 <- data_int2 %>% select(-contains('Peptides')) %>% select(-contains('Column'))
+# Melt data into gene, cell_line, value
+data_int_melt <- melt(data_int3, na.rm = FALSE, id = 'Gene_Symbol')
+colnames(data_int_melt)[2] <- "cell_line"
+# Convert specified columns to numeric
+prot_num <- data_int_melt %>%
+  mutate_at(vars("value"), as.numeric)
+# Drop extraneous description from cell line labels
+prot_num$cell_line <- sub("\\_.*", "", prot_num$cell_line)
+# pivot df
+prot_num2 <- prot_num %>%
+  pivot_wider(names_from = Gene_Symbol, values_from = value)
+```
+
+```{r}
+prot_num_summary <- prot_num %>% group_by(cell_line) %>% summarise(RAF_level = sum(value))
+
+names(mut_dat)[names(mut_dat) == "COSMIC ID"] <- "COSMIC_ID"
+names(mut_dat)[names(mut_dat) == "IS Mutated"] <- "mut_status"
+names(tram_dat)[names(tram_dat) == "Cosmic ID"] <- "COSMIC_ID"
+# only get mutatnt data
+mut_dat_filt <- mut_dat %>% filter(mut_status == 1)
+names(mut_dat_filt)[names(mut_dat_filt) == "Genetic Feature"] <- "GeneticFeature"
+mut_dat_filt$GeneticFeature <- gsub("_mut", "", mut_dat_filt$GeneticFeature)
+
+
+# Concatenate all variants for each COSMIC_ID
+mut_dat_filt2 <- mut_dat_filt %>% 
+     group_by(COSMIC_ID) %>% 
+     mutate(mut_combined = paste0(GeneticFeature, collapse = ", ")) 
+
+tram_dat$mut_status <- mut_dat_filt2$mut_combined[match(tram_dat$COSMIC_ID, mut_dat_filt2$COSMIC_ID)]
+names(tram_dat)[names(tram_dat) == "Cell Line Name"] <- "cell_line"
+tram_dat$cell_line <- gsub("-", "", tram_dat$cell_line)
+
+# concatenate summed RAF level to the trametinib data
+tram_dat$RAF_level <- prot_num_summary$RAF_level[match(tram_dat$cell_line, prot_num_summary$cell_line)]
+
+
+#hist_allRAF_levels <- ggplot(tram_dat, aes(x=RAF_level, color=RAS_mut)) + 
+# geom_histogram(aes(y=..density..), fill="white")+
+# geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+
+
+split <- "quantile"
+#split <- "median"
+if (split == "quantile") {
+  # lowest-25th percentile
+  low_threshold  <- quantile(tram_dat$RAF_level, probs = 0.25, na.rm = TRUE)
+  high_threshold <- quantile(tram_dat$RAF_level, probs = 0.75, na.rm = TRUE)
+  tram_dat$RAF_category <- ifelse(tram_dat$RAF_level > high_threshold, 'High', ifelse(tram_dat$RAF_level < low_threshold, 'Low', NA))
+  #tram_dat$RAF_category <- ifelse(tram_dat$RAF_level < low_threshold, 'Low', 'High')
+  tram_dat$RAF_category <- factor(tram_dat$RAF_category, levels = c("Low", "High"))
+  tram_dat_clean <- tram_dat[!is.na(tram_dat$RAF_level), ]
+  
+} else if (split == "median") {
+  med_RAF <- median(tram_dat$RAF_level, na.rm = TRUE)
+  min_RAF <- min(tram_dat$RAF_level, na.rm = TRUE)
+  max_RAF <- max(tram_dat$RAF_level, na.rm = TRUE)
+  tram_dat$RAF_category <- cut(tram_dat$RAF_level, breaks = c(min_RAF, med_RAF, max_RAF), labels =c('Low','High'))
+  tram_dat$RAF_category <- factor(tram_dat$RAF_category, levels = c("Low", "High"))
+  tram_dat_clean <- tram_dat[!is.na(tram_dat$RAF_level), ]
+#tram_dat$RAF_category <- ifelse(high_threshold > tram_dat$RAF_level > low_threshold, 'High', 'Low')
+} else if (split == "std") {
+  mean_value <- mean(tram_dat$RAF_level, na.rm = TRUE)
+  sd_value  <- sd(tram_dat$RAF_level, na.rm = TRUE)
+  tram_dat$RAF_category <- ifelse(tram_dat$RAF_level > mean_value + sd_value, 'High', 'Low')
+  tram_dat$RAF_category <- factor(tram_dat$RAF_category, levels = c("Low", "High"))
+  tram_dat_clean <- tram_dat[!is.na(tram_dat$RAF_level), ]
+} else if (split == "kmeans") {
+  set.seed(123)
+  tram_dat2 <- tram_dat[!is.na(tram_dat$RAF_level), ]
+  clusters <- kmeans(tram_dat2$RAF_level, centers = 2)
+  tram_dat_clean$RAF_category <- ifelse(clusters$cluster == 2, 'Low', 'High')
+  
+  kmeans_plot <- ggplot(tram_dat_clean, aes(x = RAF_level, y = IC50, color = RAF_category)) +
+  geom_point(size = 3) +
+  labs(title = "K-Means Clustering Visualization",
+       x = "RAF level",
+       y = "IC50") +
+  theme_minimal() +
+  scale_color_manual(values = c("red", "blue"))  # Customize colors if desired
+  kmeans_plot
+}
+
+# Get cell lines with RAS mutants
+RAS_mutants         <- c("KRAS", "NRAS", "HRAS")
+tram_dat_RASmutonly <- tram_dat_clean %>% filter(grepl(paste(RAS_mutants, collapse="|"), mut_status))
+tram_dat_RASmutonly$RAS_mut <- "RAS mut"
+
+# get WT data (any cell line not contained in mut_dat_filt?)
+names(mut_dat_filt2)[names(mut_dat_filt2) == "Cell Line Name"] <- "cell_line"
+names(mut_dat)[names(mut_dat) == "Cell Line Name"] <- "cell_line"
+
+RASmut_cell_lines  <- unique(tram_dat_RASmutonly$cell_line)
+allcell_lines      <- unique(tram_dat$cell_line)
+WTRAS_cell_lines   <- setdiff(allcell_lines, RASmut_cell_lines)
+tram_dat_WTRASonly <- tram_dat_clean %>% filter(cell_line %in% WTRAS_cell_lines)
+tram_dat_WTRASonly$RAS_mut <- "WT"
+#concatenate WT and mutant RAS data
+all_dat <- rbind(tram_dat_WTRASonly, tram_dat_RASmutonly)
+names(all_dat)[names(all_dat) == "Drug Name"] <- "DRUG_NAME"
+all_dat$RAF_category <- factor(all_dat$RAF_category, levels = c("Low", "High"))
+all_dat_clean <- all_dat[!is.na(all_dat$RAF_category), ]
+all_dat_clean <- all_dat_clean[!is.na(all_dat_clean$mut_status), ]
+all_dat_clean$logIC50 <- log2(all_dat_clean$IC50 )
+
+hist_RAF_levels <- ggplot(all_dat_clean, aes(x=RAF_level, color=RAS_mut)) + 
+ geom_histogram(aes(y=..density..), fill="white")+
+ geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+
+# Calculate percentiles
+percentiles <- quantile(all_dat_clean$RAF_level, probs = c(0.25, 0.75))
+
+# Create histogram with percentiles
+all_dat_clean$RAS_mut <- factor(all_dat_clean$RAS_mut, levels = c("WT", "RAS mut"))
+
+hist_RAF_levels2 <- ggplot(all_dat_clean, aes(x = RAF_level, color=RAS_mut)) +
+  geom_histogram(aes(y=..density..), fill="white")+
+  geom_density(alpha=.2) + facet_wrap(~RAS_mut) + 
+  geom_vline(xintercept = percentiles[1], linetype = "dashed", color = "red") +
+  geom_vline(xintercept = percentiles[2], linetype = "dashed", color = "green") +
+  labs(title = "Histogram with 25th and 75th Percentiles",
+       x = "Values",
+       y = "Count") 
+
+hist_IC50_levels <- ggplot(all_dat_clean, aes(x=IC50, color=RAS_mut)) + 
+ geom_histogram(aes(y=..density..), fill="white")+
+ geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+
+hist_logIC50_levels <- ggplot(all_dat_clean, aes(x=logIC50, color=RAS_mut)) + 
+ geom_histogram(aes(y=..density..), fill="white")+
+ geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+
+hist_RAF_cats <- ggplot(all_dat_clean, aes(x = RAF_category,color=RAS_mut)) +
+  geom_bar(fill = "lightblue", color = "black") +
+  labs(title = "Count of RAF Categories", x = "Category", y = "Count") +
+  theme_minimal() + facet_wrap(~DRUG_NAME, ncol=5)
+
+p1 <- ggplot(all_dat_clean, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50, fill = RAF_category)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + geom_dotplot(aes(fill = RAF_category, color = RAF_category), binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=5) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) 
+```
+IC50 transformation
+```{r}
+ic50_low_threshold  <- quantile(all_dat_clean$IC50, probs = 0.10, na.rm = TRUE)
+ic50_high_threshold <- quantile(all_dat_clean$IC50, probs = 0.90, na.rm = TRUE)
+all_dat_clean$ic50_category <- ifelse(all_dat_clean$IC50 > ic50_high_threshold, 'High', ifelse(all_dat_clean$IC50 < ic50_low_threshold, 'Low', NA))
+all_dat_clean2 <- all_dat_clean[!is.na(all_dat_clean$ic50_category), ]
+
+
+IC50stats <- all_dat_clean2 %>%
+  group_by(RAS_mut) %>%
+  t_test(IC50 ~ ic50_category) %>% 
+  add_significance() %>% rstatix::add_xy_position(x="RAS_mut", group = "ic50_category")
+
+IC50_box <- ggplot(all_dat_clean2, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_boxplot(aes(fill = ic50_category), width = 0.5, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "ic50_category") + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(IC50stats,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) + ylim(c(-6, 15))
+
+WT_IC50high <- all_dat_clean2 %>% filter(RAS_mut == "WT") %>% filter(ic50_category == "High")
+WT_IC50low <- all_dat_clean2 %>% filter(RAS_mut == "WT") %>% filter(ic50_category == "Low")
+
+WT_all_dat_clean2 <- all_dat_clean2 %>% filter(RAS_mut == "WT")
+RASmut_all_dat_clean2 <- all_dat_clean2 %>% filter(RAS_mut == "RAS mut")
+# What is each group's RAF1 values?
+WT_RAF_levels <- ggplot(WT_all_dat_clean2, aes(x=RAF_level, color=ic50_category)) + 
+ geom_histogram(aes(y=..density..), fill="white")+
+ geom_density(alpha=.2) + facet_wrap(~ic50_category)
+
+RASmut_RAF_levels <- ggplot(RASmut_all_dat_clean2, aes(x=RAF_level, color=ic50_category)) + 
+ geom_histogram(aes(y=..density..), fill="white")+
+ geom_density(alpha=.2) + facet_wrap(~ic50_category)
+```
+
+```{r}
+stat.testall <- all_dat_clean %>%
+  group_by(RAS_mut, DRUG_NAME) %>%
+  t_test(IC50 ~ RAF_category) %>% 
+  add_significance()
+stat.testall <- stat.testall %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+
+p1_box <- ggplot(all_dat_clean, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=5) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(stat.testall,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) + ylim(c(-6, 15))
+```
+Aggregate across drugs
+```{r}
+alldrugs_RAF_summary <- all_dat_clean %>%
+  group_by(DRUG_NAME, RAS_mut, RAF_category) %>%
+  summarise(mean_ic50 = mean(IC50, na.rm = TRUE), sd = sd(IC50, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+p_alldrugs_RAF <- ggplot(alldrugs_RAF_summary, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = mean_ic50, fill = RAF_category)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + geom_dotplot(aes(fill = RAF_category, color = RAF_category), binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity aggregated across ERK MAPK pathway-targeting drugs", x = "RAS mutation", y = "IC50", color = "RAF_category") + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) 
+```
+Only MEKi
+```{r}
+MEKi_list <- c("Refametinib", "PD0325901","Selumetinib","Trametinib")
+MEKi_RAF <- all_dat_clean %>%
+  filter(DRUG_NAME %in% MEKi_list) 
+
+stat.test <- MEKi_RAF %>%
+  group_by(RAS_mut, DRUG_NAME) %>%
+  t_test(IC50 ~ RAF_category) %>% 
+  add_significance()
+stat.test <- stat.test %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+
+MEKi_p_wo_stats <- ggplot(MEKi_RAF, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.9)) + geom_dotplot(aes(fill = RAF_category, color = RAF_category), binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.9)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=4) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800"))
+
+MEKi_p_wo_stats_violin <- ggplot(MEKi_RAF, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_violin(trim=FALSE,aes(fill = RAF_category), width = 0.5, position = position_dodge(0.9)) + geom_dotplot(aes(fill = RAF_category, color = RAF_category), binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.9)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=2) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800"))
+
+MEKi_p1_box <- ggplot(MEKi_RAF, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=2) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(stat.test,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) + ylim(c(-6, 15))
+
+MEKi_p1_dots <- ggplot(MEKi_RAF, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + geom_dotplot(aes(fill = RAF_category, color = RAF_category), binaxis='y', stackdir='center', dotsize = 1, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=2) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(stat.test,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) 
+
+MEKi_p1_violin <- ggplot(MEKi_RAF, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = IC50)) + geom_violin(aes(fill = RAF_category, color = RAF_category), position = position_dodge(0.8)) + geom_boxplot(aes(fill = RAF_category), width = 0.1, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity", x = "RAS mutation", y = "IC50", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=2) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(stat.test,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) 
+
+#fill = RAF_category
+
+#geom_dotplot(aes(fill = RAF_category, color = RAF_category), binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(1))
+```
+Aggregate across MEKi
+```{r}
+library(rstatix)
+library(ggpubr)
+
+MEKi_list <- c("Refametinib", "PD0325901","Selumetinib","Trametinib")
+MEKi_RAF_summary <- all_dat_clean %>%
+  filter(DRUG_NAME %in% MEKi_list) %>%
+  group_by(DRUG_NAME, RAS_mut, RAF_category) %>%
+  summarise(mean_ic50 = mean(IC50, na.rm = TRUE), sd = sd(IC50, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+
+MEKi_RAF_agg_summary <- MEKi_RAF_summary %>%
+  group_by(RAS_mut, RAF_category) %>%
+  summarise(mean_four = mean(mean_ic50, na.rm = TRUE), sd = sd(mean_ic50, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+
+stat.test2 <- MEKi_RAF_summary %>%
+  group_by(RAS_mut) %>%
+  t_test(mean_ic50 ~ RAF_category) %>% 
+  add_significance()
+stat.test2 <- stat.test2 %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+
+stat.test3 <- compare_means(
+ mean_ic50 ~ RAF_category, data = MEKi_RAF_summary, group.by = "RAS_mut",
+ method = "t.test"
+)
+stat.test3 <- stat.test3 %>% mutate(y.position = c(2.9, 3.9))
+
+p_MEKi_RAF <- ggplot(MEKi_RAF_summary, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = mean_ic50)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + geom_dotplot(aes(fill = RAF_category), color = "black", binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.8)) + labs(title = "Drug Sensitivity aggregated across MEKi", x = "RAS mutation", y = "IC50", color = "RAF_category") + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800"))  + stat_pvalue_manual(stat.test2,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) + ylim(c(-2, 5))
+```
+
+
+Analyze raw data (cell viabilty)
+```{r}
+raw_dat       <- read_csv('GDSC2_public_raw_data_27Oct23.csv')
+# Normalize data using the definition from (https://github.com/CancerRxGene/gdscIC50/blob/master/vignettes/gdscIC50.Rmd)
+normalized_dat <- normalizeData(raw_dat,
+                              trim = T,
+                              neg_control = "NC-1",
+                              pos_control = "B")
+```
+
+
+```{r}
+normalized_dat$mut_status <- mut_dat_filt2$mut_combined[match(normalized_dat$COSMIC_ID, mut_dat_filt2$COSMIC_ID)]
+normalized_dat$RAF_level  <- prot_num_summary$RAF_level[match(normalized_dat$CELL_LINE_NAME, prot_num_summary$cell_line)]
+
+target = 'MEK'
+
+if (target=='ERK_MAPK') {
+  # select ERK MAPK pathway-targeting drugs
+  normalized_dat$DRUG_NAME  <- tram_dat$`Drug Name`[match(normalized_dat$DRUG_ID, tram_dat$`Drug ID`)]
+
+} else if (target=='MEK') {
+  # select MEK inhibitors
+  normalized_dat$DRUG_NAME  <- MEKi_RAF$DRUG_NAME[match(normalized_dat$DRUG_ID_lib, MEKi_RAF$`Drug ID`)]
+} else if (target=='neg_ctrl') {
+  # select MEK inhibitors
+  raw_dat_all <- normalized_dat
+  normalized_dat <-  raw_dat_all %>% filter(TAG == 'NC-1') # treatment w/ DMSO
+  normalized_dat$DRUG_NAME  <- MEKi_RAF$DRUG_NAME[match(normalized_dat$DRUG_ID, MEKi_RAF$`Drug ID`)]
+} else if (target=='EGFR_ERK_MAPK') {
+  EGFR_dat <- read_csv('PANCANCER_IC_Tue Oct 15 18_46_38 2024.csv')
+  names(EGFR_dat)[names(EGFR_dat) == "Cosmic ID"] <- "COSMIC_ID"
+  EGFR_dat$mut_status <- mut_dat_filt2$mut_combined[match(EGFR_dat$COSMIC_ID,mut_dat_filt2$COSMIC_ID)]
+  names(EGFR_dat)[names(EGFR_dat) == "Cell Line Name"] <- "cell_line"
+  EGFR_dat$cell_line <- gsub("-", "", EGFR_dat$cell_line)
+  EGFR_dat$RAF_level <- prot_num_summary$RAF_level[match(EGFR_dat$cell_line, prot_num_summary$cell_line)]
+  
+  low_threshold  <- quantile(EGFR_dat$RAF_level, probs = 0.25, na.rm = TRUE)
+  high_threshold <- quantile(EGFR_dat$RAF_level, probs = 0.75, na.rm = TRUE)
+  
+  EGFR_dat$RAF_category <- ifelse(EGFR_dat$RAF_level > high_threshold, 'High', ifelse(EGFR_dat$RAF_level < low_threshold, 'Low', NA))
+
+  EGFR_ERK_MAPK_dosedat <- rbind(tram_dat, EGFR_dat)
+  raw_dat$DRUG_NAME  <- EGFR_ERK_MAPK_dosedat$`Drug Name`[match(raw_dat$DRUG_ID, EGFR_ERK_MAPK_dosedat$`Drug ID`)]
+
+}
+
+
+# add info about max. concentration
+max_conc <- tram_dat %>%
+   select(c('Drug ID', 'cell_line', 'Max Conc'))
+
+transf_opt = 'raw'
+if (transf_opt == "raw") {
+  raw_dat_new <- normalized_dat
+} else if (transf_opt == "log") {
+  raw_dat_new <- normalized_dat
+  raw_dat_new$INTENSITY <- log(raw_dat_new$INTENSITY)
+}  
+names(raw_dat_new)[names(raw_dat_new) == "CELL_LINE_NAME"] <- "cell_line"
+names(max_conc)[names(max_conc) == "Drug ID"] <- "DRUG_ID_lib"
+if (target=='neg_ctrl') {
+  raw_dat_max <- raw_dat_new
+  #raw_dat_max <- merge(raw_dat_new, max_conc,by = c("DRUG_ID","cell_line"))
+} else {
+  raw_dat_max <- merge(raw_dat_new, max_conc,by = c("DRUG_ID_lib","cell_line"))
+}
+
+# remove any rows that do not have matching drug names with GDSC2
+if (target=='neg_ctrl') {
+  raw_dat2           <- raw_dat_max
+} else {
+  raw_dat2           <- raw_dat_max[!is.na(raw_dat_max$DRUG_NAME), ]
+}
+
+split = "quantile"
+if (split == "quantile") {
+  # lowest-25th percentile
+  low_threshold2  <- quantile(raw_dat2$RAF_level, probs = 0.25, na.rm = TRUE)
+  high_threshold2 <- quantile(raw_dat2$RAF_level, probs = 0.75, na.rm = TRUE)
+  raw_dat2$RAF_category <- ifelse(raw_dat2$RAF_level > high_threshold2, 'High', ifelse(raw_dat2$RAF_level < low_threshold2, 'Low', NA))
+  raw_dat2$RAF_category <- factor(raw_dat2$RAF_category, levels = c("Low", "High"))
+  raw_dat_clean   <- raw_dat2[!is.na(raw_dat2$RAF_level), ]
+  raw_dat_clean2  <- raw_dat_clean[!is.na(raw_dat_clean$RAF_category), ]
+} else if (split == "median") {
+  med_RAF <- median(raw_dat2$RAF_level, na.rm = TRUE)
+  min_RAF <- min(raw_dat2$RAF_level, na.rm = TRUE)
+  max_RAF <- max(raw_dat2$RAF_level, na.rm = TRUE)
+  raw_dat2$RAF_category <- cut(raw_dat2$RAF_level, breaks = c(min_RAF, med_RAF, max_RAF), labels =c('Low','High'))
+  raw_dat2$RAF_category <- factor(raw_dat2$RAF_category, levels = c("Low", "High"))
+  raw_dat_clean2 <- raw_dat2[!is.na(raw_dat2$RAF_level), ]
+}
+# paste RAS mutant info
+raw_dat_clean_RASmutonly         <- raw_dat_clean2 %>% filter(grepl(paste(RAS_mutants, collapse="|"), mut_status))
+raw_dat_clean_RASmutonly$RAS_mut <- "RAS mut"
+# RAS mutant
+raw_dat_RASmut_cell_lines        <- unique(raw_dat_clean_RASmutonly$cell_line)
+raw_dat_allcell_lines            <- unique(raw_dat_clean2$cell_line)
+# WT
+raw_dat_WTRAS_cell_lines         <- setdiff(raw_dat_allcell_lines, raw_dat_RASmut_cell_lines)
+raw_dat_WTRASonly                <- raw_dat_clean2 %>% filter(cell_line %in% raw_dat_WTRAS_cell_lines)
+raw_dat_WTRASonly$RAS_mut        <- "WT"
+
+raw_all_dat <- rbind(raw_dat_clean_RASmutonly, raw_dat_WTRASonly)
+
+
+# plot IC50s 
+IC50_plots <- ggplot(data = raw_all_dat, aes(x = CONC, y= normalized_intensity, group= cell_line)) + geom_line(aes(color=cell_line)) + xlab("Conc") + facet_wrap(~DRUG_NAME)
+
+# select concentration of interest (max inhibition different for every drug and cell line)
+if (target=='neg_ctrl') {
+  raw_dat_select <- raw_all_dat
+} else {
+  raw_dat_select <- raw_all_dat %>% group_by(cell_line, DRUG_NAME) %>% filter(CONC == `Max Conc`)
+}
+  
+
+hist_raw_dat <- ggplot(raw_dat_select, aes(x=RAF_level, color=RAS_mut)) + 
+ geom_histogram(aes(y=..density..), fill="white")+
+ geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+hist_raw_dat
+
+if (target=='neg_ctrl') {
+  raw_dat_select_summary <- raw_dat_select %>%
+    group_by(DRUG_NAME, RAS_mut, RAF_category) %>%
+    summarise(mean_intensity = mean(normalized_intensity, na.rm = TRUE), sd = sd(normalized_intensity, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+} else {
+  raw_dat_select_summary <- raw_dat_select %>%
+    filter(DRUG_NAME %in% MEKi_list) %>%
+    group_by(DRUG_NAME, RAS_mut, RAF_category) %>%
+    summarise(mean_intensity = mean(normalized_intensity, na.rm = TRUE), sd = sd(normalized_intensity, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+}
+
+
+if (transf_opt == "raw") {
+  # Welch's t test (var.equal not set to true)
+  raw_stat       <- raw_dat_select %>%
+    group_by(RAS_mut, DRUG_NAME) %>%
+    t_test(normalized_intensity ~ RAF_category) %>% 
+    add_significance()
+  raw_stat <- raw_stat %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+
+  hist_int_dat <- ggplot(raw_dat_select, aes(x=normalized_intensity, color=RAS_mut)) + geom_histogram(aes(y=..density..), fill="white") + geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+  hist_int_dat
+  
+  
+  
+  p_rawdat_box <- ggplot(raw_dat_select, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = normalized_intensity)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + labs(title = "Cell viability", x = "RAS mutation", y = "Normalized intensity", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=2) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(raw_stat,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) + ylim(c(0, 1.8))
+  p_rawdat_box
+} else if (transf_opt == "log") {
+  raw_stat       <- raw_dat_select %>%
+    group_by(RAS_mut, DRUG_NAME) %>%
+    t_test(normalized_intensity ~ RAF_category, var.equal = TRUE) %>% 
+    add_significance()
+  raw_stat <- raw_stat %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+
+  hist_int_dat <- ggplot(raw_dat_select, aes(x=normalized_intensity, color=RAS_mut)) + geom_histogram(aes(y=..density..), fill="white") + geom_density(alpha=.2) + facet_wrap(~RAS_mut)
+  hist_int_dat
+  p_logdat_box <- ggplot(raw_dat_select, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = normalized_intensity)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + labs(title = "Viability Log(raw data)", x = "RAS mutation", y = "Log(Intensity)", color = "RAF_category") + facet_wrap(~DRUG_NAME, ncol=2) + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(raw_stat,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) 
+  p_logdat_box
+}
+```
+
+Aggregate across MEKis
+```{r}
+raw_MEKi_RAF_summary <- raw_dat_select %>%
+  filter(DRUG_NAME %in% MEKi_list) %>%
+  group_by(DRUG_NAME, RAS_mut, RAF_category) %>%
+  summarise(mean_intensity = mean(normalized_intensity, na.rm = TRUE), sd = sd(normalized_intensity, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+
+raw_MEKi_agg_summary <- raw_MEKi_RAF_summary %>%
+    group_by(RAS_mut, RAF_category) %>%
+    summarise(mean_intensity = mean(mean_intensity, na.rm = TRUE), sd = sd(mean_intensity, na.rm = TRUE), n = n(), se = sd / sqrt(n))
+
+if (transf_opt == "raw") {
+  raw_stat.test2 <- raw_MEKi_RAF_summary %>%
+  group_by(RAS_mut) %>%
+  t_test(mean_intensity ~ RAF_category) %>% 
+  add_significance()
+  raw_stat.test2 <- raw_stat.test2 %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+  p_raw_MEKi_RAF <- ggplot(raw_MEKi_RAF_summary, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = mean_intensity)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + geom_dotplot(aes(fill = RAF_category), color = "black", binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.8)) + labs(title = "Normalized intensity aggregated across MEKi", x = "RAS mutation", y = "Normalized intensity", color = "RAF_category") + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(raw_stat.test2,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05)
+} else if (transf_opt == "log") {
+  raw_stat.test2 <- raw_MEKi_RAF_summary %>%
+  group_by(RAS_mut) %>%
+  t_test(mean_intensity ~ RAF_category, var.equal = TRUE) %>% 
+  add_significance()
+  raw_stat.test2 <- raw_stat.test2 %>% rstatix::add_xy_position(x="RAS_mut", group = "RAF_category")
+  p_raw_MEKi_RAF <- ggplot(raw_MEKi_RAF_summary, aes(x = factor(RAS_mut, levels = c("WT", "RAS mut")), y = mean_intensity)) + geom_boxplot(aes(fill = RAF_category), width = 0.5, position = position_dodge(0.8)) + geom_dotplot(aes(fill = RAF_category), color = "black", binaxis='y', stackdir='center', dotsize = 0.8, position = position_dodge(0.8)) + labs(title = "Viability Log(raw data) aggregated across MEKi", x = "RAS mutation", y = "Log(Intensity)", color = "RAF_category") + scale_fill_manual(values = c("#00AFBB", "#E7B800", "white")) + scale_color_manual(values = c("#00AFBB", "#E7B800")) + stat_pvalue_manual(raw_stat.test2,  label = "p.signif",  y.position = "y.position", tip.length = 0.02, step.increase = 0.05) 
+}
+p_raw_MEKi_RAF
+```
+
