@@ -79,4 +79,5 @@ yinit_mutant                       = [
                                       0.0;		% yinit(44) is the initial condition for 'EG2SOS'
                                       0.0;		% yinit(45) is the initial condition for 'pERK'
                                       0.0;		% yinit(46) is the initial condition for 'Ras_iRaf1_iBRaf1_tetramer'
+
 ];
